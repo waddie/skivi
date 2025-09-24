@@ -1,0 +1,24 @@
+{:database {:connection-string #or [#env DATABASE_URL
+                                    "postgresql://localhost:5432/default_db"]
+            :pool-config       {:connection-timeout 30000
+                                :idle-timeout       600000
+                                :max-lifetime       1800000
+                                :maximum-pool-size  #long
+                                                     #or [#env MAX_POOL_SIZE 10]
+                                :minimum-idle       2}}
+ :queue    {:batch-complete-delay 50
+            :batch-fail-delay     50
+            :local-queue          {:enabled #boolean
+                                             #or [#env LOCAL_QUEUE_ENABLED true]
+                                   :refetch-threshold 10
+                                   :size    50
+                                   :ttl     60000}}
+ :schema   {:job-schemas {}
+            :name        #or [#env SCHEMA_NAME "job_system"]
+            :validate-payloads #boolean #or [#env VALIDATE_PAYLOADS true]}
+ :worker   {:concurrency            #long #or [#env WORKER_CONCURRENCY 4]
+            :file-extensions        [".clj" ".cljc"]
+            :graceful-shutdown-timeout 30000
+            :max-job-execution-time 300000
+            :poll-interval          #long #or [#env POLL_INTERVAL 2000]
+            :task-directory         #or [#env TASK_DIR "tasks"]}}

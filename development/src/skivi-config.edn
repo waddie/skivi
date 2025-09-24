@@ -1,0 +1,58 @@
+{:cleanup    {:enabled  true
+              :retention-periods {:failed-jobs      "30 days"
+                                  :task-identifiers "7 days"}
+              :schedule "0 3 * * *"
+              :tasks    [:gc-task-identifiers :gc-job-queues
+                         :delete-permafailed-jobs]}
+ :cron       {:default-backfill-period 3600000
+              :enabled  false
+              :file     "crontab.edn"
+              :timezone "UTC"}
+ :database   {:connection-string "postgres://localhost:5432"
+              :pool-config       {:connection-timeout 30000
+                                  :idle-timeout       600000
+                                  :max-lifetime       1800000
+                                  :maximum-pool-size  #long #or [#env
+                                                                  DB_POOL_SIZE
+                                                                 10]
+                                  :minimum-idle       2}}
+ :logging    {:format      :json
+              :include-mdc true
+              :level       :info}
+ :monitoring {:events       {:buffer-size 1000
+                             :enabled     true}
+              :health-check {:enabled true
+                             :port    3000}
+              :metrics      {:enabled  false
+                             :registry nil}}
+ :queue      {:batch-complete-delay #long #or [#env BATCH_COMPLETE_DELAY_MS 50]
+              :batch-fail-delay     #long #or [#env BATCH_FAIL_DELAY_MS 50]
+              :local-queue          {:enabled #boolean #or [#env
+                                                             LOCAL_QUEUE_ENABLED
+                                                            true]
+                                     :refetch-threshold #long
+                                                         #or [#env
+                                                               REFETCH_THRESHOLD
+                                                              10]
+                                     :size    #long #or [#env LOCAL_QUEUE_SIZE
+                                                         50]
+                                     :ttl     #long #or [#env LOCAL_QUEUE_TTL_MS
+                                                         60000]}}
+ :retry      {:base-delay   1000
+              :jitter       0.1
+              :max-attempts 25
+              :max-delay    3600000
+              :multiplier   2.0
+              :strategy     :exponential-backoff}
+ :schema     {:job-schemas #profile {:dev  #include "schemas/dev.edn"
+                                     :prod #include "schemas/prod.edn"
+                                     :test #include "schemas/test.edn"}
+              :name        #or [#env JOB_SCHEMA "job_system"]
+              :validate-payloads #boolean #or [#env VALIDATE_PAYLOADS true]}
+ :worker     {:concurrency            #long #or [#env WORKER_CONCURRENCY 4]
+              :file-extensions        [".clj" ".cljc"]
+              :graceful-shutdown-timeout #long #or [#env GRACEFUL_SHUTDOWN_MS
+                                                    30000]
+              :max-job-execution-time #long #or [#env MAX_JOB_TIME_MS 300000]
+              :poll-interval          #long #or [#env POLL_INTERVAL_MS 2000]
+              :task-directory         #or [#env TASK_DIRECTORY "tasks"]}}

@@ -1,0 +1,28 @@
+{:cron     {:default-backfill-period 3600000
+            :enabled  true
+            :file     "crontab.edn"
+            :timezone "UTC"}
+ :database {:connection-string
+            #or [#env "DATABASE_URL"
+                 "jdbc:postgresql://localhost:5432/orders_db?user=postgres"]
+            :pool-config {:connection-timeout 30000
+                          :idle-timeout       600000
+                          :max-lifetime       1800000
+                          :maximum-pool-size  10
+                          :minimum-idle       2}}
+ :queue    {:batch-complete-delay 0
+            :batch-fail-delay     0
+            :local-queue          {:enabled true
+                                   :refetch-threshold 10
+                                   :size    50
+                                   :ttl     60000}}
+ :schema   {:job-schemas {:process-payment :orders.specs/process-payment-payload
+                          :reconcile-daily :orders.specs/reconcile-daily-payload
+                          :send-confirmation
+                          :orders.specs/send-confirmation-payload}
+            :name        "skivi"
+            :validate-payloads true}
+ :worker   {:concurrency 5
+            :graceful-shutdown-timeout 15000
+            :max-job-execution-time 3600000
+            :poll-interval 2000}}

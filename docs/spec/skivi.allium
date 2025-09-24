@@ -1,0 +1,1007 @@
+-- allium: 3
+-- skivi.allium
+--
+-- Behavioural specification for the skivi job queue library.
+-- Skivi is a PostgreSQL-backed job queue for Clojure applications,
+-- inspired by Graphile Worker. It is a library, not a standalone service:
+-- it integrates into the consuming application's existing database.
+--
+-- Scope:
+--   Includes: Job lifecycle, named queues (serial serialisation),
+--             job history and audit trail, cron scheduling state,
+--             system configuration, library surfaces.
+--   Excludes: Database connection pooling (HikariCP -- infrastructure),
+--             configuration file loading (aero -- implementation),
+--             migration management (migratus -- infrastructure),
+--             monitoring and metrics wiring (implementation).
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+enum JobKeyMode { replace | preserve_run_at | unsafe_dedupe }
+
+enum HistoryStatus { started | completed | failed | partial_success }
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value JobError {
+    message: String
+    stack: String?
+}
+
+value PartialResults {
+    completed_steps: List<String>
+    failed_steps: List<String>
+    retry_from_step: String?
+    results: Any?
+}
+
+value CronSpec {
+    payload: Any?
+    priority: Integer?
+    queue_name: String?
+    rate_limit_key: String?
+    max_attempts: Integer?
+    flags: Set<String>?
+}
+
+------------------------------------------------------------
+-- Entities and Variants
+------------------------------------------------------------
+
+entity Job {
+    id: String
+    task_identifier: String
+    payload: Any
+    priority: Integer
+    queue_name: String?
+    rate_limit_key: String?
+    run_at: Timestamp
+    attempts: Integer
+    max_attempts: Integer
+    last_error: String?
+    job_key: String?
+    job_key_mode: JobKeyMode
+    flags: Set<String>
+    status: available | locked | exhausted
+    locked_by: String when status = locked
+    locked_at: Timestamp when status = locked
+    revision: Integer
+    created_at: Timestamp
+
+    transitions status {
+        available -> locked
+        available -> exhausted
+        locked -> available
+        locked -> exhausted
+        terminal: exhausted
+    }
+
+    invariant AttemptsWithinBound {
+        attempts <= max_attempts
+    }
+}
+
+entity JobQueue {
+    queue_name: String
+    locked_by: String?
+    locked_at: Timestamp?
+    created_at: Timestamp
+
+    jobs: Job with queue_name = this.queue_name
+    available_jobs: jobs where status = available
+    locked_jobs: jobs where status = locked
+    is_locked: locked_by != null
+}
+
+entity HistoryRecord {
+    job_id: String
+    correlation_id: String
+    task_identifier: String
+    payload: Any
+    status: HistoryStatus
+    worker_id: String?
+    started_at: Timestamp
+    attempt_number: Integer
+    queue_time_ms: Integer?
+    expires_at: Timestamp?
+    completed_at: Timestamp when status = completed | failed | partial_success
+    execution_time_ms: Integer when status = completed | failed | partial_success
+    error: JobError? when status = failed
+    partial: PartialResults? when status = partial_success
+
+    transitions status {
+        started -> completed
+        started -> failed
+        started -> partial_success
+        terminal: completed, failed, partial_success
+    }
+}
+
+entity CronTab {
+    identifier: String
+    schedule: String
+    timezone: String?
+    spec: CronSpec?
+    known_since: Timestamp
+    last_execution: Timestamp?
+    next_run_at: cron_next(schedule, last_execution)
+
+    @guidance
+        -- Only identifier, known_since and last_execution are persisted to the
+        -- database (the known_crontabs table). schedule, timezone and spec are
+        -- in-process configuration supplied at system startup and do not survive
+        -- a process restart: the consuming application must provide the crontab
+        -- definitions again each time the scheduler starts. next_run_at is a
+        -- derived value computed from schedule (in-process) and last_execution
+        -- (persisted).
+        -- When last_execution is null (first run after registration), the scheduler
+        -- uses known_since as the base time for cron_next. This means the first
+        -- execution fires at the first cron time after the crontab was registered,
+        -- not after the epoch.
+}
+
+entity TaskIdentifier {
+    identifier: String
+    created_at: Timestamp
+    last_used: Timestamp
+
+    active_jobs: Job with task_identifier = this.identifier
+}
+
+entity RateLimit {
+    key: String
+    capacity: Integer
+    interval: Duration
+    available_tokens: Integer
+    last_refill_at: Timestamp
+
+    next_refill_at: last_refill_at + interval
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    schema_name: String = "skivi"
+    max_attempts: Integer = 25
+    lock_timeout: Duration = 4.hours
+    poll_interval: Duration = 2.seconds
+    worker_concurrency: Integer = 10
+    local_queue_size: Integer = 50
+    local_queue_ttl: Duration = 60.seconds
+    retry_base_delay: Duration = 1.second
+    retry_multiplier: Decimal = 2.0
+    retry_jitter: Decimal = 0.1
+    retry_max_delay: Duration = 1.hour
+    history_retention: Duration = 30.days
+    cron_timezone: String = "UTC"
+    task_identifier_retention: Duration = 7.days
+    maintenance_interval: Duration = 1.minute
+}
+
+------------------------------------------------------------
+-- Black Box Functions
+------------------------------------------------------------
+
+-- exponential_backoff(attempts, base_delay, multiplier, max_delay) -> Duration
+--   Computes retry delay: base_delay * multiplier^min(attempts, 10), clamped to max_delay,
+--   with a minimum of base_delay. Jitter of up to (retry_jitter * 100)% is applied
+--   to prevent thundering-herd retry storms.
+
+-- generate_id() -> String
+--   Generates a random UUID for use as a correlation identifier.
+
+-- cron_next(schedule, last_execution?) -> Timestamp
+--   Parses a cron expression and returns the next scheduled execution timestamp
+--   after last_execution (or after known_since if last_execution is null).
+
+-- elapsed_ms(from_time, to_time) -> Integer
+--   Computes milliseconds elapsed from from_time to to_time,
+--   clamped to [0, 2147483647] (Integer maximum).
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- --------------------------------------------------------
+-- Job Creation
+-- --------------------------------------------------------
+
+rule AddJob {
+    when: AddJob(spec)
+    requires: spec.job_key = null
+    requires: spec.rate_limit_key = null or exists RateLimit{key: spec.rate_limit_key}
+    ensures: Job.created(
+        task_identifier: spec.task_identifier,
+        payload: spec.payload,
+        priority: spec.priority,
+        queue_name: spec.queue_name,
+        rate_limit_key: spec.rate_limit_key,
+        run_at: spec.run_at,
+        attempts: 0,
+        max_attempts: spec.max_attempts,
+        job_key: null,
+        job_key_mode: replace,
+        flags: spec.flags,
+        status: available,
+        revision: 0
+    )
+}
+
+rule AddJobReplace {
+    when: AddJob(spec)
+    requires: spec.job_key != null
+    requires: spec.job_key_mode = replace
+    requires: spec.rate_limit_key = null or exists RateLimit{key: spec.rate_limit_key}
+    let existing = Job{job_key: spec.job_key}
+    ensures:
+        if exists existing:
+            not exists existing
+        Job.created(
+            task_identifier: spec.task_identifier,
+            payload: spec.payload,
+            priority: spec.priority,
+            queue_name: spec.queue_name,
+            rate_limit_key: spec.rate_limit_key,
+            run_at: spec.run_at,
+            attempts: 0,
+            max_attempts: spec.max_attempts,
+            job_key: spec.job_key,
+            job_key_mode: replace,
+            flags: spec.flags,
+            status: available,
+            revision: 0
+        )
+}
+
+rule AddJobPreserveRunAt {
+    when: AddJob(spec)
+    requires: spec.job_key != null
+    requires: spec.job_key_mode = preserve_run_at
+    requires: spec.rate_limit_key = null or exists RateLimit{key: spec.rate_limit_key}
+    let existing = Job{job_key: spec.job_key}
+    ensures:
+        if exists existing:
+            existing.task_identifier = spec.task_identifier
+            existing.payload = spec.payload
+            existing.queue_name = spec.queue_name
+            existing.rate_limit_key = spec.rate_limit_key
+            existing.priority = spec.priority
+            existing.max_attempts = spec.max_attempts
+            existing.flags = spec.flags
+            existing.revision = existing.revision + 1
+        else:
+            Job.created(
+                task_identifier: spec.task_identifier,
+                payload: spec.payload,
+                priority: spec.priority,
+                queue_name: spec.queue_name,
+                rate_limit_key: spec.rate_limit_key,
+                run_at: spec.run_at,
+                attempts: 0,
+                max_attempts: spec.max_attempts,
+                job_key: spec.job_key,
+                job_key_mode: preserve_run_at,
+                flags: spec.flags,
+                status: available,
+                revision: 0
+            )
+
+    @guidance
+        -- run_at is deliberately preserved on the existing job, allowing callers
+        -- to update job parameters without resetting its scheduled execution time.
+}
+
+rule AddJobUnsafeDedupe {
+    when: AddJob(spec)
+    requires: spec.job_key != null
+    requires: spec.job_key_mode = unsafe_dedupe
+    requires: spec.rate_limit_key = null or exists RateLimit{key: spec.rate_limit_key}
+    let existing = Job{job_key: spec.job_key}
+    ensures:
+        if not exists existing:
+            Job.created(
+                task_identifier: spec.task_identifier,
+                payload: spec.payload,
+                priority: spec.priority,
+                queue_name: spec.queue_name,
+                rate_limit_key: spec.rate_limit_key,
+                run_at: spec.run_at,
+                attempts: 0,
+                max_attempts: spec.max_attempts,
+                job_key: spec.job_key,
+                job_key_mode: unsafe_dedupe,
+                flags: spec.flags,
+                status: available,
+                revision: 0
+            )
+
+    @guidance
+        -- "Unsafe" because it does not check whether the existing job has the same
+        -- task_identifier or payload. Use when idempotency is the only concern.
+}
+
+rule AddJobs {
+    when: AddJobs(specs)
+    ensures:
+        for spec in specs:
+            AddJob(spec)
+
+    @guidance
+        -- All jobs are added atomically within a single transaction.
+}
+
+rule RescheduleJobs {
+    when: RescheduleJobs(job_ids, run_at?, priority?, max_attempts?)
+    for job in Jobs where job.id in job_ids:
+        ensures:
+            if run_at != null:
+                job.run_at = run_at
+            if priority != null:
+                job.priority = priority
+            if max_attempts != null:
+                job.max_attempts = max_attempts
+            if run_at != null or priority != null or max_attempts != null:
+                job.revision = job.revision + 1
+}
+
+-- --------------------------------------------------------
+-- Worker Execution
+-- --------------------------------------------------------
+
+rule WorkerClaimsJobs {
+    when: WorkerClaimsJobs(worker_id)
+    for job in Jobs where status = available
+        and run_at <= now
+        and (queue_name = null
+             or not exists JobQueue{queue_name: queue_name}
+             or not JobQueue{queue_name: queue_name}.is_locked)
+        and (rate_limit_key = null
+             or not exists RateLimit{key: rate_limit_key}
+             or RateLimit{key: rate_limit_key}.available_tokens > 0):
+        ensures: WorkerClaimsJob(worker_id: worker_id, job: job)
+
+    @guidance
+        -- At most config.local_queue_size jobs are claimed per call.
+        -- Jobs are selected in priority ASC, run_at ASC, id ASC order.
+        -- Workers may configure forbidden flags to skip matching jobs.
+        -- All claims are applied in a single atomic database transaction.
+}
+
+rule WorkerClaimsJob {
+    when: WorkerClaimsJob(worker_id, job)
+    requires: job.status = available
+    let rl = RateLimit{key: job.rate_limit_key}
+    requires: job.rate_limit_key = null or not exists rl or rl.available_tokens > 0
+    ensures:
+        job.status = locked
+        job.locked_by = worker_id
+        job.locked_at = now
+        job.attempts = job.attempts + 1
+        job.revision = job.revision + 1
+        if exists rl:
+            rl.available_tokens = rl.available_tokens - 1
+        if job.queue_name != null:
+            JobQueueLocked(queue_name: job.queue_name, worker_id: worker_id)
+        let history = HistoryRecord.created(
+            job_id: job.id,
+            correlation_id: generate_id(),
+            task_identifier: job.task_identifier,
+            payload: job.payload,
+            status: started,
+            worker_id: worker_id,
+            started_at: now,
+            attempt_number: job.attempts,
+            queue_time_ms: elapsed_ms(job.run_at, now),
+            expires_at: now + config.history_retention
+        )
+        HandlerNotFound(worker_id: worker_id, job: job, history_record: history)
+
+    @guidance
+        -- attempts is incremented at claim time, before execution begins, so
+        -- HistoryRecord.attempt_number reflects the count after increment.
+        -- The rate limit guard here handles the concurrent case: WorkerClaimsJobs
+        -- filters by available_tokens > 0, but two workers may race and both see
+        -- tokens available before either decrements. The requires guard ensures
+        -- only one succeeds per remaining token.
+        -- HandlerNotFound is emitted by the worker only when the job's
+        -- task_identifier is not present in the in-process handler registry
+        -- (a {"task-id" handler-fn} map passed at system startup). The registry
+        -- has no database representation, so the absence check cannot be
+        -- expressed declaratively in this spec; the worker performs the lookup
+        -- and emits HandlerNotFound when no handler is registered.
+}
+
+rule WorkerDefersJobForRateLimit {
+    when: WorkerClaimsJob(worker_id, job)
+    requires: job.status = available
+    let rl = RateLimit{key: job.rate_limit_key}
+    requires: job.rate_limit_key != null
+    requires: exists rl
+    requires: rl.available_tokens <= 0
+    ensures: job.run_at = rl.next_refill_at
+
+    @guidance
+        -- Fires when a concurrent worker consumed the last token between
+        -- WorkerClaimsJobs selection and this claim attempt. Advancing run_at
+        -- to next_refill_at prevents tight re-polling until the window resets.
+        -- In the current implementation, get_jobs selects and locks job rows
+        -- atomically using FOR UPDATE SKIP LOCKED and decrements tokens within
+        -- the same transaction. This eliminates the concurrent double-claim
+        -- scenario, making this rule structurally unreachable. It is retained
+        -- to document the invariant should the implementation change.
+}
+
+rule JobExhaustedMissingHandler {
+    when: HandlerNotFound(worker_id, job, history_record)
+    requires: job.status = locked
+    requires: job.locked_by = worker_id
+    requires: history_record.status = started
+    ensures:
+        job.status = exhausted
+        job.locked_by = null
+        job.locked_at = null
+        job.last_error = "no handler registered"
+        if job.queue_name != null:
+            JobQueueUnlocked(queue_name: job.queue_name)
+        history_record.status = failed
+        history_record.completed_at = now
+        history_record.execution_time_ms = elapsed_ms(history_record.started_at, now)
+
+    @guidance
+        -- Bypasses the normal retry cycle: a missing handler is a configuration
+        -- error that will not resolve between retries. The task_identifier and
+        -- payload remain in the history record for diagnosis.
+        -- execution_time_ms records the actual dispatch overhead (handler lookup
+        -- time), not zero, so the history record reflects real elapsed time even
+        -- though no user code ran.
+}
+
+rule LockJobQueue {
+    when: JobQueueLocked(queue_name, worker_id)
+    let q = JobQueue{queue_name}
+    requires: exists q
+    requires: q.locked_by = null
+    ensures:
+        q.locked_by = worker_id
+        q.locked_at = now
+}
+
+rule CreateAndLockJobQueue {
+    when: JobQueueLocked(queue_name, worker_id)
+    let q = JobQueue{queue_name}
+    requires: not exists q
+    ensures: JobQueue.created(
+        queue_name: queue_name,
+        locked_by: worker_id,
+        locked_at: now
+    )
+}
+
+rule WorkerCompletesJob {
+    when: WorkerCompletesJob(worker_id, job, history_record, execution_time_ms)
+    requires: job.status = locked
+    requires: job.locked_by = worker_id
+    requires: history_record.job_id = job.id
+    requires: history_record.status = started
+    ensures:
+        if job.queue_name != null:
+            JobQueueUnlocked(queue_name: job.queue_name)
+        history_record.status = completed
+        history_record.completed_at = now
+        history_record.execution_time_ms = execution_time_ms
+        not exists job
+}
+
+rule WorkerFailsJob {
+    when: WorkerFailsJob(worker_id, job, history_record, error, execution_time_ms)
+    requires: job.status = locked
+    requires: job.locked_by = worker_id
+    requires: job.attempts < job.max_attempts
+    requires: history_record.job_id = job.id
+    requires: history_record.status = started
+    ensures:
+        job.status = available
+        job.locked_by = null
+        job.locked_at = null
+        job.last_error = error.message
+        job.run_at = exponential_backoff(job.attempts, config.retry_base_delay, config.retry_multiplier, config.retry_max_delay)
+        job.revision = job.revision + 1
+        if job.queue_name != null:
+            JobQueueUnlocked(queue_name: job.queue_name)
+        history_record.status = failed
+        history_record.completed_at = now
+        history_record.execution_time_ms = execution_time_ms
+        history_record.error = error
+
+    @guidance
+        -- Retry delay: exponential_backoff computes base_delay * multiplier^min(attempts, 10),
+        -- clamped to retry_max_delay, with retry_base_delay as minimum.
+        -- Jitter up to (retry_jitter * 100)% is added to prevent thundering-herd retry storms.
+}
+
+rule WorkerExhaustsJob {
+    when: WorkerFailsJob(worker_id, job, history_record, error, execution_time_ms)
+    requires: job.status = locked
+    requires: job.locked_by = worker_id
+    requires: job.attempts >= job.max_attempts
+    requires: job.locked_at + config.lock_timeout > now
+    requires: history_record.job_id = job.id
+    requires: history_record.status = started
+    ensures:
+        job.status = exhausted
+        job.locked_by = null
+        job.locked_at = null
+        job.last_error = error.message
+        job.run_at = exponential_backoff(job.attempts, config.retry_base_delay, config.retry_multiplier, config.retry_max_delay)
+        job.revision = job.revision + 1
+        if job.queue_name != null:
+            JobQueueUnlocked(queue_name: job.queue_name)
+        history_record.status = failed
+        history_record.completed_at = now
+        history_record.execution_time_ms = execution_time_ms
+        history_record.error = error
+
+    @guidance
+        -- requires: locked_at + lock_timeout > now distinguishes this rule from
+        -- ResetOverdueJobs (which fires when the condition is <=). The static analyser
+        -- may flag a conflict between these rules; the conflict is resolved by the
+        -- complementary temporal conditions, which the analyser cannot verify statically.
+}
+
+rule WorkerReportsPartialSuccess {
+    when: WorkerReportsPartialSuccess(worker_id, job, history_record, partial_results, execution_time_ms)
+    requires: job.status = locked
+    requires: job.locked_by = worker_id
+    requires: job.attempts < job.max_attempts
+    requires: history_record.job_id = job.id
+    requires: history_record.status = started
+    ensures:
+        job.status = available
+        job.locked_by = null
+        job.locked_at = null
+        job.run_at = exponential_backoff(job.attempts, config.retry_base_delay, config.retry_multiplier, config.retry_max_delay)
+        job.revision = job.revision + 1
+        if job.queue_name != null:
+            JobQueueUnlocked(queue_name: job.queue_name)
+        history_record.status = partial_success
+        history_record.completed_at = now
+        history_record.execution_time_ms = execution_time_ms
+        history_record.partial = partial_results
+
+    @guidance
+        -- Partial success is treated as a retry-eligible failure: the job is
+        -- rescheduled from partial_results.retry_from_step on the next execution attempt.
+}
+
+rule WorkerExhaustsJobWithPartialSuccess {
+    when: WorkerReportsPartialSuccess(worker_id, job, history_record, partial_results, execution_time_ms)
+    requires: job.status = locked
+    requires: job.locked_by = worker_id
+    requires: job.attempts >= job.max_attempts
+    requires: job.locked_at + config.lock_timeout > now
+    requires: history_record.job_id = job.id
+    requires: history_record.status = started
+    ensures:
+        job.status = exhausted
+        job.locked_by = null
+        job.locked_at = null
+        job.run_at = exponential_backoff(job.attempts, config.retry_base_delay, config.retry_multiplier, config.retry_max_delay)
+        job.revision = job.revision + 1
+        if job.queue_name != null:
+            JobQueueUnlocked(queue_name: job.queue_name)
+        history_record.status = partial_success
+        history_record.completed_at = now
+        history_record.execution_time_ms = execution_time_ms
+        history_record.partial = partial_results
+
+    @guidance
+        -- See WorkerExhaustsJob: requires locked_at + lock_timeout > now disambiguates
+        -- this rule from ResetOverdueJobs via complementary temporal conditions.
+}
+
+-- --------------------------------------------------------
+-- Admin Operations
+-- --------------------------------------------------------
+
+rule PermanentlyFailJobs {
+    when: PermanentlyFailJobs(job_ids, reason)
+    for job in Jobs where job.id in job_ids:
+        let was_locked = job.status = locked
+        ensures:
+            job.status = exhausted
+            job.last_error = reason
+            if was_locked and job.queue_name != null:
+                JobQueueUnlocked(queue_name: job.queue_name)
+}
+
+rule ForceUnlockJobs {
+    when: ForceUnlockJobs(worker_ids?)
+    for job in Jobs where status = locked:
+        requires: worker_ids = null or job.locked_by in worker_ids
+        ensures:
+            if job.attempts < job.max_attempts:
+                job.status = available
+            else:
+                job.status = exhausted
+            job.locked_by = null
+            job.locked_at = null
+            if job.queue_name != null:
+                JobQueueUnlocked(queue_name: job.queue_name)
+}
+
+rule ForceUnlockQueues {
+    when: ForceUnlockQueues(queue_names?)
+    for q in JobQueues where locked_by != null:
+        requires: queue_names = null or q.queue_name in queue_names
+        ensures:
+            q.locked_by = null
+            q.locked_at = null
+}
+
+rule UnlockJobQueue {
+    when: JobQueueUnlocked(queue_name)
+    let q = JobQueue{queue_name}
+    requires: exists q
+    requires: q.locked_by != null
+    ensures:
+        q.locked_by = null
+        q.locked_at = null
+}
+
+rule RegisterRateLimit {
+    when: RegisterRateLimit(key, capacity, interval)
+    let existing = RateLimit{key}
+    ensures:
+        if exists existing:
+            existing.capacity = capacity
+            existing.interval = interval
+        else:
+            RateLimit.created(
+                key: key,
+                capacity: capacity,
+                interval: interval,
+                available_tokens: capacity,
+                last_refill_at: now
+            )
+
+    @guidance
+        -- Updating an existing rate limit preserves the current available_tokens
+        -- and last_refill_at so in-progress windows are not disrupted.
+}
+
+rule ReplayFailedJobs {
+    when: ReplayFailedJobs(from_time, to_time, task_identifier?, max_attempts?)
+    for record in HistoryRecords
+        where status = failed
+        and started_at >= from_time
+        and started_at <= to_time
+        and (task_identifier = null or record.task_identifier = task_identifier):
+        ensures: Job.created(
+            task_identifier: record.task_identifier,
+            payload: record.payload,
+            priority: 0,
+            queue_name: null,
+            run_at: now,
+            attempts: 0,
+            max_attempts: max_attempts ?? config.max_attempts,
+            job_key: record.job_id,
+            job_key_mode: replace,
+            flags: {"replay"},
+            status: available,
+            revision: 0
+        )
+
+    @guidance
+        -- Using job_key = record.job_id with mode replace prevents duplicate
+        -- replays if ReplayFailedJobs is called twice for the same time range.
+        -- Replayed jobs can be identified by the job_key matching an original job_id.
+}
+
+-- --------------------------------------------------------
+-- Task Identifier Tracking
+-- --------------------------------------------------------
+
+rule TrackTaskIdentifier {
+    when: job: Job.created
+    let ti = TaskIdentifier{identifier: job.task_identifier}
+    ensures:
+        if exists ti:
+            ti.last_used = now
+        else:
+            TaskIdentifier.created(
+                identifier: job.task_identifier,
+                last_used: now
+            )
+}
+
+rule RefreshTaskIdentifierOnComplete {
+    when: WorkerCompletesJob(worker_id, job, history_record, execution_time_ms)
+    requires: job.status = locked
+    requires: job.locked_by = worker_id
+    requires: history_record.status = started
+    let ti = TaskIdentifier{identifier: job.task_identifier}
+    ensures:
+        if exists ti:
+            ti.last_used = now
+        else:
+            TaskIdentifier.created(
+                identifier: job.task_identifier,
+                last_used: now
+            )
+}
+
+rule RefreshTaskIdentifierOnFail {
+    when: WorkerFailsJob(worker_id, job, history_record, error, execution_time_ms)
+    requires: job.status = locked
+    requires: job.locked_by = worker_id
+    requires: history_record.status = started
+    let ti = TaskIdentifier{identifier: job.task_identifier}
+    ensures:
+        if exists ti:
+            ti.last_used = now
+        else:
+            TaskIdentifier.created(
+                identifier: job.task_identifier,
+                last_used: now
+            )
+}
+
+rule RefreshTaskIdentifierOnPartialSuccess {
+    when: WorkerReportsPartialSuccess(worker_id, job, history_record, partial_results, execution_time_ms)
+    requires: job.status = locked
+    requires: job.locked_by = worker_id
+    requires: history_record.status = started
+    let ti = TaskIdentifier{identifier: job.task_identifier}
+    ensures:
+        if exists ti:
+            ti.last_used = now
+        else:
+            TaskIdentifier.created(
+                identifier: job.task_identifier,
+                last_used: now
+            )
+}
+
+rule GarbageCollectTaskIdentifiers {
+    when: GarbageCollectTaskIdentifiers(retention?)
+    for ti in TaskIdentifiers
+        where last_used + (retention ?? config.task_identifier_retention) <= now
+        and active_jobs.count = 0:
+        ensures: not exists ti
+}
+
+-- --------------------------------------------------------
+-- Maintenance
+-- --------------------------------------------------------
+
+rule RefillRateLimit {
+    when: rl: RateLimit.next_refill_at <= now
+    ensures:
+        rl.available_tokens = rl.capacity
+        rl.last_refill_at = now
+
+    @guidance
+        -- Sets last_refill_at = now so next_refill_at advances to now + interval,
+        -- preventing re-firing within the same window. Tokens are always reset to
+        -- full capacity (fixed window model); there is no carryover from partial windows.
+}
+
+rule ResetOverdueJobs {
+    when: job: Job.locked_at + config.lock_timeout <= now
+    requires: job.status = locked
+    ensures:
+        if job.attempts < job.max_attempts:
+            job.status = available
+        else:
+            job.status = exhausted
+        job.locked_by = null
+        job.locked_at = null
+        if job.queue_name != null:
+            JobQueueUnlocked(queue_name: job.queue_name)
+
+    @guidance
+        -- Fires when a worker has held a lock beyond config.lock_timeout (default 4 hours).
+        -- This recovers jobs orphaned by crashed workers. Jobs with remaining attempts
+        -- re-enter the queue; jobs that exhausted all attempts are marked terminal.
+}
+
+rule GarbageCollectJobHistory {
+    when: GarbageCollectJobHistory()
+    ensures:
+        for record in HistoryRecords where expires_at != null and expires_at <= now:
+            not exists record
+
+    @guidance
+        -- Removes history records whose retention period has elapsed.
+        -- Pair with a scheduled call from the application's maintenance loop.
+}
+
+rule GarbageCollectQueues {
+    when: GarbageCollectQueues()
+    for queue in JobQueues where locked_by = null and jobs.count = 0:
+        ensures: not exists queue
+
+    @guidance
+        -- The database maintains a job_count counter on job_queues via an
+        -- INSERT/UPDATE/DELETE trigger on jobs. The GC function uses job_count
+        -- as the primary filter and cross-checks against the jobs table to
+        -- guard against counter drift. job_count is an implementation detail;
+        -- the spec's jobs.count = 0 condition is the authoritative definition.
+}
+
+-- --------------------------------------------------------
+-- Cron Scheduling
+-- --------------------------------------------------------
+
+rule CronFiresJob {
+    when: cron_tab: CronTab.next_run_at <= now
+    ensures:
+        Job.created(
+            task_identifier: cron_tab.identifier,
+            payload: cron_tab.spec.payload ?? {},
+            priority: cron_tab.spec.priority ?? 0,
+            queue_name: cron_tab.spec.queue_name,
+            rate_limit_key: cron_tab.spec.rate_limit_key,
+            run_at: now,
+            attempts: 0,
+            max_attempts: cron_tab.spec.max_attempts ?? config.max_attempts,
+            job_key: cron_tab.identifier,
+            job_key_mode: unsafe_dedupe,
+            flags: cron_tab.spec.flags ?? {},
+            status: available,
+            revision: 0
+        )
+        cron_tab.last_execution = now
+
+    @guidance
+        -- job_key = cron_tab.identifier with unsafe_dedupe prevents a second cron
+        -- job from being enqueued if the previous one is still queued or running.
+        -- Per-task overrides (payload, priority, queue_name, max_attempts, flags)
+        -- are read from cron_tab.spec if present.
+        -- Backfill: if last_execution is far in the past and a backfill_period is
+        -- configured, multiple jobs may be created to catch up on missed executions.
+}
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+invariant UniqueJobKey {
+    for a in Jobs:
+        for b in Jobs:
+            a != b and a.job_key != null and b.job_key != null
+                implies a.job_key != b.job_key
+}
+
+invariant QueueSerialisation {
+    for q in JobQueues:
+        q.is_locked implies q.locked_jobs.count <= 1
+}
+
+invariant RateLimitTokenBound {
+    for rl in RateLimits:
+        rl.available_tokens >= 0 and rl.available_tokens <= rl.capacity
+}
+
+------------------------------------------------------------
+-- Actor Declarations
+------------------------------------------------------------
+
+actor Application {
+    identified_by: User
+
+    @guidance
+        -- Represents any consuming application process that enqueues jobs.
+        -- Identity is not enforced by the library; the application is trusted.
+}
+
+actor WorkerProcess {
+    identified_by: User
+
+    @guidance
+        -- Represents a worker in the worker pool, identified by its worker_id string.
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+surface JobEnqueue {
+    facing _: Application
+
+    provides:
+        AddJob(spec)
+        AddJobs(specs)
+        RescheduleJobs(job_ids, run_at?, priority?, max_attempts?)
+        ReplayFailedJobs(from_time, to_time, task_identifier?, max_attempts?)
+        PermanentlyFailJobs(job_ids, reason)
+        ForceUnlockJobs(worker_ids?)
+        ForceUnlockQueues(queue_names?)
+        GarbageCollectQueues()
+        GarbageCollectTaskIdentifiers(retention?)
+        GarbageCollectJobHistory()
+        RegisterRateLimit(key, capacity, interval)
+
+    @guarantee AtomicBatchAddition
+        -- AddJobs adds all jobs atomically: either all succeed or none are added.
+
+    @guidance
+        -- Primary library API consumed by the application.
+        -- AddJob and AddJobs are the everyday job submission operations.
+        -- Admin operations (replay, force-unlock) are for operational recovery.
+}
+
+surface WorkerExecution {
+    facing _: WorkerProcess
+
+    provides:
+        WorkerClaimsJobs(worker_id)
+        WorkerCompletesJob(worker_id, job, history_record, execution_time_ms)
+        WorkerFailsJob(worker_id, job, history_record, error, execution_time_ms)
+        WorkerReportsPartialSuccess(worker_id, job, history_record, partial_results, execution_time_ms)
+
+    @guarantee WorkerOwnership
+        -- A worker can only complete, fail, or report partial success for jobs
+        -- it has locked (locked_by = worker_id). Attempts on jobs locked by
+        -- other workers are rejected.
+
+    @guidance
+        -- Driven by the worker pool implementation, not called directly by application code.
+        -- WorkerClaimsJobs is called on each polling cycle to retrieve available jobs.
+        -- The HistoryRecord returned at claim time must be passed back to the outcome call.
+}
+
+surface Maintenance {
+    facing _: Application
+
+    timeout:
+        ResetOverdueJobs
+        RefillRateLimit
+
+    provides:
+        GarbageCollectJobHistory()
+        GarbageCollectTaskIdentifiers(retention?)
+        GarbageCollectQueues()
+
+    @guidance
+        -- Driven by the built-in maintenance scheduler, not called directly by application code.
+        -- ResetOverdueJobs and RefillRateLimit fire on each maintenance_interval tick (default 1 minute).
+        -- GarbageCollect operations fire on the configured gc_schedule cron expression.
+        -- GarbageCollectJobHistory, GarbageCollectTaskIdentifiers, and GarbageCollectQueues
+        -- also remain available on the JobEnqueue surface for explicit application calls.
+}
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open question "Should exhausted jobs be GC'd on a schedule automatically, or only via an explicit PermanentlyFailJobs admin call? The requirements mention delete-permafailed-jobs as a cleanup task."
+
+open question "HistoryRecord.payload: should the payload snapshot always be stored, or is this opt-in? The requirements mention sensitive data masking but do not specify the mechanism."
+
+open question "CronFiresJob: should the backfill logic (creating multiple catch-up jobs when last_execution is old) be specified in this spec, or deferred to the cron scheduler component?"
+
+open question "WorkerClaimsJobs claims all matching available jobs in the for loop. Should count (batch size limit) be a trigger parameter for spec completeness, or left entirely to config.local_queue_size via @guidance?"
+
+-- Analyser note: 'allium analyse' reports 'unreachable_trigger' findings for
+-- JobQueueLocked (received by LockJobQueue, CreateAndLockJobQueue) and
+-- JobQueueUnlocked (received by UnlockJobQueue). Both triggers are emitted
+-- conditionally inside 'if job.queue_name != null:' blocks. The static analyser
+-- does not trace trigger emissions inside conditional branches; the triggers
+-- are reachable in practice whenever their guard conditions are met.
+-- HandlerNotFound is emitted unconditionally by WorkerClaimsJob; the
+-- absence-of-registered-handler check is an in-process registry lookup that
+-- cannot be expressed declaratively (see WorkerClaimsJob @guidance).
+
+-- Analyser note: 'allium analyse' reports two 'conflict' findings between
+-- WorkerExhaustsJob / WorkerExhaustsJobWithPartialSuccess and ResetOverdueJobs.
+-- Both sets of rules fire when Job.status = locked, but their preconditions are
+-- temporally disjoint: exhaust rules require locked_at + lock_timeout > now,
+-- ResetOverdueJobs fires when locked_at + lock_timeout <= now. The static
+-- analyser cannot verify temporal arithmetic disjointness; the conflict is not real.

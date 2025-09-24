@@ -1,0 +1,21 @@
+{:database {:connection-string
+            #or [#env "DATABASE_URL"
+                 "jdbc:postgresql://localhost:5432/fibonacci_db?user=postgres"]
+            :pool-config {:connection-timeout 30000
+                          :idle-timeout       600000
+                          :max-lifetime       1800000
+                          :maximum-pool-size  25
+                          :minimum-idle       5}}
+ :queue    {:batch-complete-delay 0
+            :batch-fail-delay     0
+            :local-queue          {:enabled true
+                                   :refetch-threshold 100
+                                   :size    1000
+                                   :ttl     60000}}
+ :schema   {:job-schemas {}
+            :name        "skivi"
+            :validate-payloads false}
+ :worker   {:concurrency 20
+            :graceful-shutdown-timeout 15000
+            :max-job-execution-time 3600000
+            :poll-interval 500}}

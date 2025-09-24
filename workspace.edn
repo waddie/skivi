@@ -1,0 +1,10 @@
+{:compact-views #{}
+ :default-profile-name "default"
+ :interface-ns  "interface"
+ :projects      {"development" {:alias "dev"}
+                 "library"     {:alias "library"}}
+ :tag-patterns  {:release "^v[0-9].*"
+                 :stable  "^stable-.*"}
+ :top-namespace "dev.skivi"
+ :vcs           {:auto-add false
+                 :name     "git"}}

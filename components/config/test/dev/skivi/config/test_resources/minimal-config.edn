@@ -1,0 +1,21 @@
+{:database {:connection-string "postgresql://localhost:5432/minimal_db"
+            :pool-config       {:connection-timeout 30000
+                                :idle-timeout       600000
+                                :max-lifetime       1800000
+                                :maximum-pool-size  5
+                                :minimum-idle       1}}
+ :queue    {:batch-complete-delay 10
+            :batch-fail-delay     10
+            :local-queue          {:enabled true
+                                   :refetch-threshold 5
+                                   :size    20
+                                   :ttl     30000}}
+ :schema   {:job-schemas {}
+            :name        "minimal_schema"
+            :validate-payloads false}
+ :worker   {:concurrency            2
+            :file-extensions        [".clj"]
+            :graceful-shutdown-timeout 30000
+            :max-job-execution-time 60000
+            :poll-interval          1000
+            :task-directory         "tasks"}}

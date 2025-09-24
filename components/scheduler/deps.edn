@@ -1,0 +1,6 @@
+{:aliases {:test {:extra-deps  {org.slf4j/slf4j-nop {:mvn/version "2.0.18"}}
+                  :extra-paths ["test"]}}
+ :deps    {com.cronutils/cron-utils {:mvn/version "9.2.1"}
+           com.github.seancorfield/next.jdbc {:mvn/version "1.3.1108"}
+           metosin/malli {:mvn/version "0.20.1"}}
+ :paths   ["src" "resources"]}

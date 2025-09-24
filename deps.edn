@@ -1,0 +1,28 @@
+{:aliases {:dev
+           {:extra-deps
+            {;components
+             dev.skivi/config        {:local/root "components/config"}
+             dev.skivi/database      {:local/root "components/database"}
+             dev.skivi/job-history   {:local/root "components/job-history"}
+             dev.skivi/job-manager   {:local/root "components/job-manager"}
+             dev.skivi/maintenance   {:local/root "components/maintenance"}
+             dev.skivi/migration     {:local/root "components/migration"}
+             dev.skivi/monitoring    {:local/root "components/monitoring"}
+             dev.skivi/queue         {:local/root "components/queue"}
+             dev.skivi/scheduler     {:local/root "components/scheduler"}
+             dev.skivi/validation    {:local/root "components/validation"}
+             dev.skivi/worker-pool   {:local/root "components/worker-pool"}
+             ; bases
+             dev.skivi/skivi         {:local/root "bases/skivi"}
+             ; development dependencies
+             cider/cider-nrepl       {:mvn/version "0.59.0"}
+             dev.tomwaddington/still {:mvn/version "0.1.36"}
+             nrepl/nrepl             {:mvn/version "1.7.0"}
+             org.clojure/clojure     {:mvn/version "1.12.5"}
+             org.clojure/core.match  {:mvn/version "1.1.1"}}
+            :extra-paths ["development/src"]}
+           :poly {:extra-deps {polylith/clj-poly {:mvn/version "0.3.32"}}
+                  :main-opts  ["-m" "polylith.clj.core.poly-cli.core"]}
+           :test {:extra-deps  {}
+                  :extra-paths []
+                  :jvm-opts    ["-Dclojure.compiler.warn-on-reflection=true"]}}}

@@ -1,0 +1,51 @@
+{:snapshot/created-at "2026-05-24T06:51:26.050059Z"
+ :snapshot/key :user/load-config
+ :snapshot/platform :clj
+ :snapshot/value {:cleanup    {:enabled  true
+                               :maintenance-interval-ms 60000
+                               :retention-periods {:failed-jobs      "30 days"
+                                                   :task-identifiers "7 days"}
+                               :schedule "0 3 * * *"
+                               :tasks    [:gc-task-identifiers :gc-job-queues
+                                          :delete-permafailed-jobs]}
+                  :cron       {:default-backfill-period 3600000
+                               :enabled  false
+                               :file     "crontab.edn"
+                               :timezone "UTC"}
+                  :database   {:connection-string "postgres://localhost:5432"
+                               :pool-config       {:connection-timeout 30000
+                                                   :idle-timeout       600000
+                                                   :max-lifetime       1800000
+                                                   :maximum-pool-size  10
+                                                   :minimum-idle       2}}
+                  :logging    {:format      :json
+                               :include-mdc true
+                               :level       :info}
+                  :monitoring {:events       {:buffer-size 1000
+                                              :enabled     true}
+                               :health-check {:enabled true
+                                              :port    3000}
+                               :metrics      {:enabled  false
+                                              :registry nil}}
+                  :queue      {:batch-complete-delay 50
+                               :batch-fail-delay     50
+                               :local-queue          {:enabled true
+                                                      :refetch-threshold 10
+                                                      :size    50
+                                                      :ttl     60000}}
+                  :retry      {:base-delay   1000
+                               :jitter       0.1
+                               :max-attempts 25
+                               :max-delay    3600000
+                               :multiplier   2.0
+                               :strategy     :exponential-backoff}
+                  :schema     {:job-schemas {:aero/missing-include
+                                             "schemas/dev.edn"}
+                               :name        "job_system"
+                               :validate-payloads true}
+                  :worker     {:concurrency            4
+                               :file-extensions        [".clj" ".cljc"]
+                               :graceful-shutdown-timeout 30000
+                               :max-job-execution-time 300000
+                               :poll-interval          2000
+                               :task-directory         "tasks"}}}

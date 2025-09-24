@@ -1,0 +1,36 @@
+{:aliases {:build {:extra-deps {io.github.clojure/tools.build {:mvn/version
+                                                               "0.10.13"}
+                                slipset/deps-deploy {:mvn/version "0.2.3"}}
+                   :ns-default build}
+           :test  {:extra-deps  {}
+                   :extra-paths []}}
+ :deps    {org.clojure/clojure       {:mvn/version "1.12.5"}
+           ;; components
+           dev.skivi/config          {:local/root "../../components/config"}
+           dev.skivi/database        {:local/root "../../components/database"}
+           dev.skivi/job-history     {:local/root
+                                      "../../components/job-history"}
+           dev.skivi/job-manager     {:local/root
+                                      "../../components/job-manager"}
+           dev.skivi/maintenance     {:local/root
+                                      "../../components/maintenance"}
+           dev.skivi/migration       {:local/root "../../components/migration"}
+           dev.skivi/monitoring      {:local/root "../../components/monitoring"}
+           dev.skivi/queue           {:local/root "../../components/queue"}
+           dev.skivi/scheduler       {:local/root "../../components/scheduler"}
+           dev.skivi/validation      {:local/root "../../components/validation"}
+           dev.skivi/worker-pool     {:local/root
+                                      "../../components/worker-pool"}
+           ;; base
+           dev.skivi/skivi           {:local/root "../../bases/skivi"}
+           ;; runtime dependencies (union of all component deps)
+           aero/aero                 {:mvn/version "1.1.6"}
+           cheshire/cheshire         {:mvn/version "6.2.0"}
+           com.cronutils/cron-utils  {:mvn/version "9.2.1"}
+           com.github.seancorfield/honeysql {:mvn/version "2.7.1368"}
+           com.github.seancorfield/next.jdbc {:mvn/version "1.3.1108"}
+           com.zaxxer/HikariCP       {:mvn/version "7.0.2"}
+           metosin/malli             {:mvn/version "0.20.1"}
+           migratus/migratus         {:mvn/version "1.6.6"}
+           org.clojure/tools.logging {:mvn/version "1.3.1"}
+           org.postgresql/postgresql {:mvn/version "42.7.11"}}}

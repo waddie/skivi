@@ -1,0 +1,4 @@
+{:app/database   {:host "localhost"
+                  :port 5432}
+ :app/other      {:setting "value"}
+ :app/web-server {:port 8080}}

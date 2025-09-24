@@ -1,0 +1,25 @@
+{:app/database   {:host "localhost"
+                  :port 5432}
+ :app/web-server {:port 8080}
+ :skivi          {:database {:connection-string
+                             "postgresql://localhost:5432/test_db"
+                             :pool-config {:connection-timeout 30000
+                                           :idle-timeout       600000
+                                           :max-lifetime       1800000
+                                           :maximum-pool-size  10
+                                           :minimum-idle       2}}
+                  :queue    {:batch-complete-delay 50
+                             :batch-fail-delay     50
+                             :local-queue          {:enabled true
+                                                    :refetch-threshold 10
+                                                    :size    50
+                                                    :ttl     60000}}
+                  :schema   {:job-schemas {}
+                             :name        "job_system"
+                             :validate-payloads true}
+                  :worker   {:concurrency            4
+                             :file-extensions        [".clj" ".cljc"]
+                             :graceful-shutdown-timeout 30000
+                             :max-job-execution-time 300000
+                             :poll-interval          2000
+                             :task-directory         "tasks"}}}

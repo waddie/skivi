@@ -1,0 +1,8 @@
+Graphile
+HikariCP
+Polylith
+aero
+classpath
+juxt
+malli
+skivi
