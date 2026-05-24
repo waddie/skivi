@@ -1,3 +1,5 @@
+[![Clojars Project](https://img.shields.io/clojars/v/dev.skivi/skivi.svg)](https://clojars.org/dev.skivi/skivi)
+
 # Skivi
 
 Skivi is a PostgreSQL-backed job queue library for Clojure, in the spirit of
