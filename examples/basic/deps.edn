@@ -1,2 +1,2 @@
-{:deps  {dev.skivi/skivi {:mvn/version "0.0.0-SNAPSHOT"}}
+{:deps  {dev.skivi/skivi {:mvn/version "0.1.0"}}
  :paths ["src" "resources"]}
