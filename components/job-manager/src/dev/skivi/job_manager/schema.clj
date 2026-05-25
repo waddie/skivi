@@ -58,6 +58,7 @@
    [:payload :map]
    [:priority {:optional true} :int]
    [:queue-name {:optional true} [:maybe :string]]
+   [:rate-limit-key {:optional true} [:maybe :string]]
    [:run-at {:optional true} inst?]
    [:max-attempts {:optional true} :int]
    [:job-key {:optional true} [:maybe :string]]

@@ -94,7 +94,7 @@
   "Partial success results."
   [:map [:completed-steps [:vector :string]] [:failed-steps [:vector :string]]
    [:retry-from-step {:optional true} [:maybe :string]]
-   [:results {:optional true} :map]])
+   [:results {:optional true} :any]])
 
 (def HistoryRecord
   "Job history record."

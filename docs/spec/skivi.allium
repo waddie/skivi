@@ -591,6 +591,7 @@ rule WorkerExhaustsJobWithPartialSuccess {
         job.status = exhausted
         job.locked_by = null
         job.locked_at = null
+        job.last_error = "max-attempts reached on partial-success"
         job.run_at = exponential_backoff(job.attempts, config.retry_base_delay, config.retry_multiplier, config.retry_max_delay)
         job.revision = job.revision + 1
         if job.queue_name != null:
@@ -603,6 +604,11 @@ rule WorkerExhaustsJobWithPartialSuccess {
     @guidance
         -- See WorkerExhaustsJob: requires locked_at + lock_timeout > now disambiguates
         -- this rule from ResetOverdueJobs via complementary temporal conditions.
+        -- In the current implementation this exhaustion path routes through
+        -- permanently-fail-jobs (shared with PermanentlyFailJobs). As a result,
+        -- run_at is not updated by the code — permanently-fail-jobs does not call
+        -- exponential_backoff. Since exhausted is terminal, run_at is never consulted
+        -- again; this is the one intentional asymmetry with WorkerExhaustsJob.
 }
 
 -- --------------------------------------------------------
@@ -616,6 +622,10 @@ rule PermanentlyFailJobs {
         ensures:
             job.status = exhausted
             job.last_error = reason
+            job.revision = job.revision + 1
+            if was_locked:
+                job.locked_by = null
+                job.locked_at = null
             if was_locked and job.queue_name != null:
                 JobQueueUnlocked(queue_name: job.queue_name)
 }

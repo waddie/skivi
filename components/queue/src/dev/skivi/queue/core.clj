@@ -93,10 +93,11 @@
 (defn create-queue
   "Creates a local queue. Call start! to begin polling.
   worker-id is used for all job claims from this queue."
-  {:malli/schema [:function
-                  [:=> [:cat schema/JobManagerSystem :string] schema/LocalQueue]
-                  [:=> [:cat schema/JobManagerSystem :string schema/QueueConfig]
-                   schema/LocalQueue]]}
+  {:malli/schema
+   [:function
+    [:=> [:cat schema/JobManagerSystem :string] schema/LocalQueue]
+    [:=> [:cat schema/JobManagerSystem :string schema/QueueTuningConfig]
+     schema/LocalQueue]]}
   ([job-system worker-id] (create-queue job-system worker-id {}))
   ([job-system worker-id config]
    {:config     (merge defaults config)

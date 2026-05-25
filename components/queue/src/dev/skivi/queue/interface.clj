@@ -54,10 +54,11 @@
   "Creates a local queue. Call start! to begin polling.
   config keys: :size, :ttl-ms, :refetch-threshold, :poll-interval-ms,
   :refetch-delay-ms, :task-identifiers, :forbidden-flags."
-  {:malli/schema [:function
-                  [:=> [:cat schema/JobManagerSystem :string] schema/LocalQueue]
-                  [:=> [:cat schema/JobManagerSystem :string schema/QueueConfig]
-                   schema/LocalQueue]]}
+  {:malli/schema
+   [:function
+    [:=> [:cat schema/JobManagerSystem :string] schema/LocalQueue]
+    [:=> [:cat schema/JobManagerSystem :string schema/QueueTuningConfig]
+     schema/LocalQueue]]}
   ([job-system worker-id] (core/create-queue job-system worker-id))
   ([job-system worker-id config]
    (core/create-queue job-system worker-id config)))

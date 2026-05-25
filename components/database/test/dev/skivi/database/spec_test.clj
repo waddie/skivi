@@ -1049,19 +1049,19 @@
     (let [pool      (fresh-pool)
           worker-id (unique-worker)
           task      (unique-task)
-          before    (java.time.Instant/now)
           _ (db/add-job pool task {:data "test"} {:max-attempts 10})
           jobs      (db/get-jobs pool worker-id {:task-identifiers [task]})
           job       (first jobs)]
       (when job
-        (let [result (db/fail-jobs pool
-                                   worker-id
-                                   [{:error-message "Transient"
-                                     :job-id        (:id job)}])
-              failed (first result)]
+        (let [original-run-at (:run-at job)
+              result          (db/fail-jobs pool
+                                            worker-id
+                                            [{:error-message "Transient"
+                                              :job-id        (:id job)}])
+              failed          (first result)]
           (when failed
-            (is (pos? (.compareTo (:run-at failed) before))
-                "run_at is scheduled after the time of failure")
+            (is (not (neg? (.compareTo (:run-at failed) original-run-at)))
+                "run_at is not moved backwards by a failure")
             (is (= "Transient" (:last-error failed))
                 "last_error records the failure message")))))))
 

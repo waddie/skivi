@@ -23,7 +23,7 @@
 
 (ns dev.skivi.queue.schema "Malli schemas for queue component.")
 
-(def QueueConfig
+(def QueueTuningConfig
   "Local queue tuning parameters.
 
   :size               - max jobs held in the buffer at one time (default 50).
@@ -59,5 +59,5 @@
   [:map
    [:job-system JobManagerSystem]
    [:worker-id :string]
-   [:config QueueConfig]
+   [:config QueueTuningConfig]
    [:state :any]])

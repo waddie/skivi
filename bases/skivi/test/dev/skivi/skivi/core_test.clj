@@ -104,9 +104,6 @@
         (core/stop! sys)
         (is @closed?)))))
 
-;;;; ── load-task-registry
-;;;; ─────────────────────────────────────────────────────
-
 (defn- make-temp-dir
   []
   (let [d (java.io.File. (System/getProperty "java.io.tmpdir")
