@@ -61,7 +61,9 @@
                 :multiplier   2.0
                 :strategy     :exponential-backoff}
    :schema     {:name "skivi"}
-   :worker     {:concurrency   10
+   :worker     {:concurrency 10
+                :graceful-shutdown-timeout 30000
+                :max-job-execution-time 300000
                 :poll-interval 2000}})
 
 (defn merge-with-defaults

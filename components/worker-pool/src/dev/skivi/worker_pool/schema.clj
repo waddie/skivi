@@ -31,6 +31,7 @@
   :queue-size                   - max jobs held in the local buffer (default 50).
   :queue-ttl-ms                 - entries older than this are discarded on take (default 60000).
   :graceful-shutdown-timeout-ms - max time to wait for in-flight jobs on stop! (default 30000).
+  :max-job-execution-time-ms    - per-job hard timeout; Thread.interrupt() sent on breach (default 300000).
   :task-identifiers             - restrict claims to these task types (nil = all).
   :forbidden-flags              - skip jobs carrying any of these flags (nil = none)."
   [:map
@@ -39,6 +40,7 @@
    [:queue-size {:optional true} pos-int?]
    [:queue-ttl-ms {:optional true} pos-int?]
    [:graceful-shutdown-timeout-ms {:optional true} pos-int?]
+   [:max-job-execution-time-ms {:optional true} [:maybe pos-int?]]
    [:task-identifiers {:optional true} [:maybe [:vector :string]]]
    [:forbidden-flags {:optional true} [:maybe [:vector :string]]]])
 

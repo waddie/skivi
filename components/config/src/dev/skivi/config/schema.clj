@@ -43,6 +43,8 @@
   [:map
    [:concurrency pos-int?]
    [:poll-interval pos-int?]
+   [:graceful-shutdown-timeout pos-int?]
+   [:max-job-execution-time pos-int?]
    [:task-directory {:optional true} string?]
    [:file-extensions {:optional true} [:vector string?]]])
 

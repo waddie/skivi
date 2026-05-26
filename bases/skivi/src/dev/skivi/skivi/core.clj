@@ -97,10 +97,20 @@
          job-system      {:pool         pool
                           :retry-config (config/retry-config config)
                           :validator    validator}
+         pool-cfg        {:concurrency      (:concurrency worker-cfg)
+                          :graceful-shutdown-timeout-ms
+                          (:graceful-shutdown-timeout worker-cfg)
+                          :max-job-execution-time-ms (:max-job-execution-time
+                                                      worker-cfg)
+                          :poll-interval-ms (:poll-interval worker-cfg)
+                          :queue-size       (get-in config
+                                                    [:queue :local-queue :size])
+                          :queue-ttl-ms     (get-in config
+                                                    [:queue :local-queue :ttl])}
          wp              (worker-pool/create-pool job-system
                                                   merged-registry
                                                   emitter
-                                                  worker-cfg)
+                                                  pool-cfg)
          history         (job-history/create-store pool
                                                    {:buffer-size
                                                     (get-in config
@@ -171,7 +181,10 @@
      (maintenance/stop! maint (get opts :maintenance-timeout-ms 5000)))
    (when-let [sched (:scheduler system)]
      (scheduler/stop! sched (get opts :scheduler-timeout-ms 5000)))
-   (worker-pool/stop! (:worker-pool system) (get opts :worker-timeout-ms 15000))
+   (let [cfg-timeout
+         (get-in system [:config :worker :graceful-shutdown-timeout] 30000)]
+     (worker-pool/stop! (:worker-pool system)
+                        (get opts :worker-timeout-ms cfg-timeout)))
    (database/close-pool (:pool system))
    system))
 
