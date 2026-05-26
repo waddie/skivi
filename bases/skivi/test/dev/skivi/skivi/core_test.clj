@@ -57,8 +57,10 @@
                 :max-delay    3600000
                 :multiplier   2.0}
    :schema     {:name "skivi"}
-   :worker     {:concurrency      2
-                :poll-interval-ms 1000}})
+   :worker     {:concurrency 2
+                :graceful-shutdown-timeout 30000
+                :max-job-execution-time 300000
+                :poll-interval 1000}})
 
 (deftest create-system-returns-expected-keys
   (testing "all required keys are present"
@@ -93,6 +95,27 @@
                      :schedule   "0 * * * *"}]
           sys      (core/create-system stub-config {} crontabs)]
       (is (contains? sys :scheduler)))))
+
+(deftest system-timeout-wiring-test
+  (testing "create-system translates worker config keys to pool config keys"
+    (with-redefs [database/create-pool     (constantly ::mock-pool)
+                  job-history/create-store (fn [_ _] ::mock-history)]
+      (let [cfg (assoc stub-config
+                       :worker
+                       {:concurrency 2
+                        :graceful-shutdown-timeout 100
+                        :max-job-execution-time 200
+                        :poll-interval 500})
+            sys (core/create-system cfg)]
+        (is
+         (= 100
+            (get-in sys [:worker-pool :config :graceful-shutdown-timeout-ms]))
+         "graceful-shutdown-timeout translated to graceful-shutdown-timeout-ms")
+        (is (= 200
+               (get-in sys [:worker-pool :config :max-job-execution-time-ms]))
+            "max-job-execution-time translated to max-job-execution-time-ms")
+        (is (= 500 (get-in sys [:worker-pool :config :poll-interval-ms]))
+            "poll-interval translated to poll-interval-ms")))))
 
 (deftest stop-closes-pool
   (let [closed? (atom false)]

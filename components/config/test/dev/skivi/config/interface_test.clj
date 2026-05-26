@@ -138,6 +138,33 @@
       (is (contains? minimal-cfg :cleanup)))))
 
 ;; =============================================================================
+;; Worker Timeout Defaults Tests
+;; =============================================================================
+
+(deftest worker-timeout-defaults-test
+  (testing
+    "default-config supplies graceful-shutdown-timeout and max-job-execution-time"
+    (let [merged (core/merge-with-defaults
+                  {:database {:connection-string
+                              "jdbc:postgresql://localhost/test"
+                              :password "postgres"
+                              :pool-config {:connection-timeout 30000
+                                            :idle-timeout       600000
+                                            :max-lifetime       1800000
+                                            :maximum-pool-size  5
+                                            :minimum-idle       1}
+                              :username "postgres"}
+                   :queue    {:local-queue {:size 20
+                                            :ttl  30000}}
+                   :schema   {:name "test"}
+                   :worker   {:concurrency   2
+                              :poll-interval 1000}})]
+      (is (= 30000 (get-in merged [:worker :graceful-shutdown-timeout]))
+          "default graceful-shutdown-timeout is 30000ms")
+      (is (= 300000 (get-in merged [:worker :max-job-execution-time]))
+          "default max-job-execution-time is 300000ms"))))
+
+;; =============================================================================
 ;; Default Merging Tests
 ;; =============================================================================
 

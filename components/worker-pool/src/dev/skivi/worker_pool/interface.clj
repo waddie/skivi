@@ -59,6 +59,7 @@
     :job/failed          - task fn threw; retry scheduled
     :job/exhausted       - task fn threw on the final allowed attempt
     :job/partial-success - task fn returned a partial-success value
+    :job/timeout         - job exceeded :max-job-execution-time-ms; treated as failure
     :worker/error        - infrastructure exception outside task execution"
   (:require [dev.skivi.worker-pool.core :as core]
             [dev.skivi.worker-pool.schema :as schema]))
@@ -82,7 +83,8 @@
   task-registry is a map of task-identifier -> handler fn.
   emitter is a monitoring/Emitter.
   config keys: :concurrency, :poll-interval-ms, :queue-size, :queue-ttl-ms,
-               :graceful-shutdown-timeout-ms, :task-identifiers, :forbidden-flags."
+               :graceful-shutdown-timeout-ms, :max-job-execution-time-ms,
+               :task-identifiers, :forbidden-flags."
   {:malli/schema [:function
                   [:=> [:cat :any schema/TaskRegistry :any] schema/WorkerPool]
                   [:=>

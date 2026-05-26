@@ -42,6 +42,7 @@
     :job/failed          - task fn threw; job retry scheduled
     :job/exhausted       - task fn threw on the final allowed attempt
     :job/partial-success - task fn returned a partial-success value
+    :job/timeout         - job exceeded :max-job-execution-time-ms; treated as failure
     :worker/error        - infrastructure exception outside task execution"
   (:require [dev.skivi.job-manager.interface :as job-manager]
             [dev.skivi.monitoring.interface :as monitoring]
@@ -53,6 +54,7 @@
 (def ^:private defaults
   {:concurrency      10
    :graceful-shutdown-timeout-ms 30000
+   :max-job-execution-time-ms 300000
    :poll-interval-ms 2000
    :queue-size       50
    :queue-ttl-ms     60000})
@@ -91,15 +93,39 @@
               :job-system job-system
               :worker-id  (queue/worker-id queue)})))
 
+(defn- execute-with-timeout!
+  "Runs execute-job! in a future bounded by timeout-ms.
+  Cancels the future and throws ex-info on breach; emits :job/timeout first."
+  [pool job timeout-ms]
+  (let [fut    (future (execute-job! pool job))
+        result (try (deref fut timeout-ms ::timeout)
+                    (catch java.util.concurrent.ExecutionException e
+                      (throw (or (.getCause e) e))))]
+    (when (= result ::timeout)
+      (future-cancel fut)
+      (monitoring/emit! (:emitter pool)
+                        :job/timeout
+                        {:job-id     (:id job)
+                         :timeout-ms timeout-ms
+                         :worker-id  (queue/worker-id (:queue pool))})
+      (throw (ex-info (str "Job timed out after " timeout-ms "ms")
+                      {:job-id     (:id job)
+                       :timeout-ms timeout-ms
+                       :type       ::job-timeout})))
+    result))
+
 (defn- process-job!
   "Executes job and reports outcome to job-manager. Updates pool stats."
   [pool job]
   (let [{:keys [emitter job-system queue state]} pool
-        wid   (queue/worker-id queue)
-        start (System/currentTimeMillis)]
+        wid        (queue/worker-id queue)
+        timeout-ms (get-in pool [:config :max-job-execution-time-ms])
+        start      (System/currentTimeMillis)]
     (swap! state update-in [:stats :active] inc)
     (try
-      (let [result  (execute-job! pool job)
+      (let [result  (if timeout-ms
+                      (execute-with-timeout! pool job timeout-ms)
+                      (execute-job! pool job))
             elapsed (- (System/currentTimeMillis) start)]
         (if (partial-success? result)
           (let [exhausted? (>= (:attempts job) (:max-attempts job))]

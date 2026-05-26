@@ -378,7 +378,118 @@
                "second start! throws")
            (finally (worker-pool/stop! pool 3000))))))
 
+;;;; ── Job execution timeout ─────────────────────────────────────────────────
+
+(deftest max-job-execution-time-timeout-test
+  (testing
+    "job exceeding :max-job-execution-time-ms is failed and :job/timeout is emitted"
+    (let [sys     (helpers/real-system)
+          task-id (helpers/unique-task-id)
+          done    (promise)
+          tasks   {task-id (fn [_]
+                             (try (Thread/sleep 5000)
+                                  (catch InterruptedException _ nil)))}
+          em      (helpers/collecting-emitter)
+          _ (monitoring/on em :job/timeout (fn [_] (deliver done true)))
+          pool    (-> (worker-pool/create-pool
+                       sys
+                       tasks
+                       em
+                       (assoc (helpers/pool-config)
+                              :task-identifiers [task-id]
+                              :max-job-execution-time-ms 200))
+                      worker-pool/start!)]
+      (try (job-manager/add-job sys task-id {:x 1} {:max-attempts 1})
+           (let [received (deref done 3000 ::timeout)]
+             (is (not= ::timeout received) ":job/timeout emitted within 3 s")
+             (Thread/sleep 300)
+             (is (pos? (:failed (worker-pool/stats pool)))
+                 "pool :failed counter incremented after timeout"))
+           (finally (worker-pool/stop! pool 3000))))))
+
+(deftest max-job-execution-time-no-timeout-test
+  (testing "fast task completes normally when :max-job-execution-time-ms is set"
+    (let [sys     (helpers/real-system)
+          task-id (helpers/unique-task-id)
+          done    (promise)
+          tasks   {task-id (fn [_] (deliver done true))}
+          em      (helpers/collecting-emitter)
+          pool    (-> (worker-pool/create-pool
+                       sys
+                       tasks
+                       em
+                       (assoc (helpers/pool-config)
+                              :task-identifiers [task-id]
+                              :max-job-execution-time-ms 2000))
+                      worker-pool/start!)]
+      (try (job-manager/add-job sys task-id {:x 1})
+           (deref done 5000 nil)
+           (Thread/sleep 200)
+           (let [events (monitoring/events em)
+                 types  (set (map :type events))]
+             (is (contains? types :job/completed)
+                 ":job/completed emitted for fast task with timeout set")
+             (is (not (contains? types :job/timeout))
+                 "no :job/timeout event for fast task"))
+           (finally (worker-pool/stop! pool 3000))))))
+
+(deftest max-job-execution-time-nil-test
+  (testing "task completes normally when :max-job-execution-time-ms is nil"
+    (let [sys     (helpers/real-system)
+          task-id (helpers/unique-task-id)
+          done    (promise)
+          tasks   {task-id (fn [_] (Thread/sleep 300) (deliver done true))}
+          em      (helpers/collecting-emitter)
+          pool    (-> (worker-pool/create-pool
+                       sys
+                       tasks
+                       em
+                       (assoc (helpers/pool-config)
+                              :task-identifiers [task-id]
+                              :max-job-execution-time-ms nil))
+                      worker-pool/start!)]
+      (try (job-manager/add-job sys task-id {:x 1})
+           (let [received (deref done 5000 ::timeout)]
+             (is (not= ::timeout received)
+                 "task with nil timeout completes without being interrupted")
+             (Thread/sleep 200)
+             (let [events (monitoring/events em)
+                   types  (set (map :type events))]
+               (is (contains? types :job/completed) ":job/completed emitted")
+               (is (not (contains? types :job/timeout))
+                   "no :job/timeout event")))
+           (finally (worker-pool/stop! pool 3000))))))
+
 ;;;; ── Graceful shutdown waits for in-flight work ────────────────────────────
+
+(deftest graceful-shutdown-timeout-config-test
+  (testing "stop! with no args uses :graceful-shutdown-timeout-ms from config"
+    (let [sys          (helpers/real-system)
+          task-id      (helpers/unique-task-id)
+          task-started (promise)
+          task-done    (promise)
+          tasks        {task-id (fn [_]
+                                  (deliver task-started true)
+                                  (Thread/sleep 50)
+                                  (deliver task-done true))}
+          em           (helpers/collecting-emitter)
+          pool         (-> (worker-pool/create-pool
+                            sys
+                            tasks
+                            em
+                            (assoc (helpers/pool-config)
+                                   :task-identifiers [task-id]
+                                   :graceful-shutdown-timeout-ms 2000))
+                           worker-pool/start!)]
+      (job-manager/add-job sys task-id {:x 1})
+      (deref task-started 3000 nil)
+      (worker-pool/stop! pool)
+      (is (realized? task-done) "task completed before stop! returned")
+      (let [stop-evt (->> (monitoring/events em)
+                          (filter #(= :pool/stop (:type %)))
+                          first)]
+        (is (false? (get-in stop-evt [:data :forced?]))
+            "pool stopped gracefully (not forced)")))))
 
 (deftest graceful-shutdown-waits-for-in-flight-job-test
   ;; [surface.WorkerExecution] - stop! must wait for active workers before
