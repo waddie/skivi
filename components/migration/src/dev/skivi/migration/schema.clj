@@ -26,4 +26,6 @@
   "Config accepted by migrate! and rollback!."
   [:map
    [:connection-string :string]
+   [:username {:optional true} :string]
+   [:password {:optional true} :string]
    [:schema-name {:optional true} :string]])

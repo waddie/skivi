@@ -161,7 +161,9 @@
      (let [cfg    (:config system)
            db-cfg (config/database-config cfg)]
        (migration/migrate! {:connection-string (:connection-string db-cfg)
-                            :schema-name       (config/schema-name cfg)})))
+                            :password          (:password db-cfg)
+                            :schema-name       (config/schema-name cfg)
+                            :username          (:username db-cfg)})))
    (worker-pool/start! (:worker-pool system))
    (when-let [sched (:scheduler system)]
      (scheduler/start! sched))

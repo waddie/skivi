@@ -27,13 +27,15 @@
             [migratus.core :as migratus]))
 
 (defn- migratus-config
-  [{:keys [connection-string schema-name]}]
+  [{:keys [connection-string schema-name username password]}]
   ;; Do NOT set currentSchema here: migratus creates its schema_migrations
   ;; tracking table before running any migrations, so the target schema
   ;; doesn't exist yet. The migration SQL uses ${migratus.schema}
   ;; substitution so all objects land in the configured schema, not a
   ;; hardcoded one.
-  {:db            {:connection-uri connection-string}
+  {:db            (cond-> {:jdbcUrl connection-string}
+                    username (assoc :user username)
+                    password (assoc :password password))
    :migration-dir "migrations"
    :properties    {:map {:migratus {:schema (or schema-name "skivi")}}}
    :store         :database})
