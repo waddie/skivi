@@ -35,35 +35,29 @@
 (def DatabaseConfig
   [:map
    [:connection-string string?]
+   [:username string?]
+   [:password string?]
    [:pool-config DatabasePoolConfig]])
 
 (def WorkerConfig
   [:map
    [:concurrency pos-int?]
    [:poll-interval pos-int?]
-   [:graceful-shutdown-timeout pos-int?]
    [:task-directory {:optional true} string?]
-   [:file-extensions {:optional true} [:vector string?]]
-   [:max-job-execution-time pos-int?]])
+   [:file-extensions {:optional true} [:vector string?]]])
 
 (def LocalQueueConfig
   [:map
-   [:enabled boolean?]
    [:size pos-int?]
-   [:ttl pos-int?]
-   [:refetch-threshold pos-int?]])
+   [:ttl pos-int?]])
 
 (def QueueConfig
   [:map
-   [:local-queue LocalQueueConfig]
-   [:batch-complete-delay nat-int?]
-   [:batch-fail-delay nat-int?]])
+   [:local-queue LocalQueueConfig]])
 
 (def SchemaConfig
   [:map
-   [:name string?]
-   [:validate-payloads boolean?]
-   [:job-schemas [:map-of keyword? any?]]])
+   [:name string?]])
 
 (def CronConfig
   [:map

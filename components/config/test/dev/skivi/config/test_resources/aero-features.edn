@@ -1,11 +1,13 @@
 {:database {:connection-string #or [#env DATABASE_URL
                                     "postgresql://localhost:5432/default_db"]
+            :password          #or [#env DB_PASSWORD "postgres"]
             :pool-config       {:connection-timeout 30000
                                 :idle-timeout       600000
                                 :max-lifetime       1800000
                                 :maximum-pool-size  #long
                                                      #or [#env MAX_POOL_SIZE 10]
-                                :minimum-idle       2}}
+                                :minimum-idle       2}
+            :username          #or [#env DB_USERNAME "postgres"]}
  :queue    {:batch-complete-delay 50
             :batch-fail-delay     50
             :local-queue          {:enabled #boolean

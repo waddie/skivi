@@ -2,14 +2,16 @@
             :enabled  true
             :file     "crontab.edn"
             :timezone "UTC"}
- :database {:connection-string
-            #or [#env "DATABASE_URL"
-                 "jdbc:postgresql://localhost:5432/orders_db?user=postgres"]
-            :pool-config {:connection-timeout 30000
-                          :idle-timeout       600000
-                          :max-lifetime       1800000
-                          :maximum-pool-size  10
-                          :minimum-idle       2}}
+ :database {:connection-string #or
+                                [#env "DATABASE_URL"
+                                 "jdbc:postgresql://localhost:5432/orders_db"]
+            :password          #or [#env "DB_PASSWORD" "postgres"]
+            :pool-config       {:connection-timeout 30000
+                                :idle-timeout       600000
+                                :max-lifetime       1800000
+                                :maximum-pool-size  10
+                                :minimum-idle       2}
+            :username          #or [#env "DB_USERNAME" "postgres"]}
  :queue    {:batch-complete-delay 0
             :batch-fail-delay     0
             :local-queue          {:enabled true

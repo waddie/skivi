@@ -65,7 +65,7 @@
 (defn health-check
   "Performs a simple health check by executing a basic query.
    Returns true if the database is accessible, false otherwise."
-  {:malli/schema [:function [:=> [:cat schema/Pool schema/SqlMap] :boolean]]}
+  {:malli/schema [:function [:=> [:cat schema/Pool] :boolean]]}
   [pool]
   (core/health-check pool))
 

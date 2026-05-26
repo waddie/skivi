@@ -2,13 +2,15 @@
                                 {:dev  "postgresql://localhost:5432/dev_db"
                                  :prod "postgresql://localhost:5432/prod_db"
                                  :test "postgresql://localhost:5432/test_db"}
+            :password          "postgres"
             :pool-config       {:connection-timeout 30000
                                 :idle-timeout       600000
                                 :max-lifetime       1800000
                                 :maximum-pool-size  #profile {:dev  5
                                                               :prod 20
                                                               :test 3}
-                                :minimum-idle       2}}
+                                :minimum-idle       2}
+            :username          "postgres"}
  :logging  #profile {:dev  {:format      :pretty
                             :include-mdc true
                             :level       :debug}

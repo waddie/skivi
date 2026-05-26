@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS ${migratus.schema}.jobs (
     revision        INTEGER     NOT NULL DEFAULT 0
 )
 --;;
+-- RLS is enabled so that future multi-tenant policies can be added without a schema change.
+-- The application user is the table owner and therefore bypasses RLS by default —
+-- no rows are filtered until explicit policies are defined.
 ALTER TABLE ${migratus.schema}.jobs ENABLE ROW LEVEL SECURITY
 --;;
 CREATE TABLE IF NOT EXISTS ${migratus.schema}.job_queues (

@@ -80,11 +80,13 @@
   (testing "Validating a valid configuration succeeds"
     (let [valid-cfg {:database {:connection-string
                                 "postgresql://localhost:5432/test"
+                                :password "postgres"
                                 :pool-config {:connection-timeout 30000
                                               :idle-timeout       600000
                                               :max-lifetime       1800000
                                               :maximum-pool-size  10
-                                              :minimum-idle       2}}
+                                              :minimum-idle       2}
+                                :username "postgres"}
                      :queue    {:batch-complete-delay 50
                                 :batch-fail-delay     50
                                 :local-queue          {:enabled true

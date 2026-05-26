@@ -1,11 +1,13 @@
 {:database {:connection-string
             #or [#env "DATABASE_URL"
-                 "jdbc:postgresql://localhost:5432/fibonacci_db?user=postgres"]
+                 "jdbc:postgresql://localhost:5432/fibonacci_db"]
+            :password #or [#env "DB_PASSWORD" "postgres"]
             :pool-config {:connection-timeout 30000
                           :idle-timeout       600000
                           :max-lifetime       1800000
                           :maximum-pool-size  25
-                          :minimum-idle       5}}
+                          :minimum-idle       5}
+            :username #or [#env "DB_USERNAME" "postgres"]}
  :queue    {:batch-complete-delay 0
             :batch-fail-delay     0
             :local-queue          {:enabled true

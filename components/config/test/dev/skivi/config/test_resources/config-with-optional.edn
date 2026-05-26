@@ -7,11 +7,13 @@
               :file     "custom-crontab.edn"
               :timezone "America/New_York"}
  :database   {:connection-string "postgresql://localhost:5432/test_db"
+              :password          "postgres"
               :pool-config       {:connection-timeout 30000
                                   :idle-timeout       600000
                                   :max-lifetime       1800000
                                   :maximum-pool-size  10
-                                  :minimum-idle       2}}
+                                  :minimum-idle       2}
+              :username          "postgres"}
  :logging    {:format      :pretty
               :include-mdc false
               :level       :debug}

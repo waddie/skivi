@@ -536,7 +536,7 @@
         task (:task-identifier criteria)]
     (jdbc/execute!
      pool
-     ["SELECT * FROM replay_failed_jobs(?::timestamptz, ?::timestamptz, ?, NULL, ?)"
+     ["SELECT * FROM replay_failed_jobs(?::timestamptz, ?::timestamptz, ?, ?)"
       from to task (int (or (:max-attempts criteria) 25))]
      result-opts)))
 

@@ -9,13 +9,15 @@
               :file     "crontab.edn"
               :timezone "UTC"}
  :database   {:connection-string "postgres://localhost:5432"
+              :password          #or [#env DB_PASSWORD "postgres"]
               :pool-config       {:connection-timeout 30000
                                   :idle-timeout       600000
                                   :max-lifetime       1800000
                                   :maximum-pool-size  #long #or [#env
                                                                   DB_POOL_SIZE
                                                                  10]
-                                  :minimum-idle       2}}
+                                  :minimum-idle       2}
+              :username          #or [#env DB_USERNAME "postgres"]}
  :logging    {:format      :json
               :include-mdc true
               :level       :info}

@@ -1,9 +1,11 @@
 {:database {:connection-string "postgresql://localhost:5432/minimal_db"
+            :password          "postgres"
             :pool-config       {:connection-timeout 30000
                                 :idle-timeout       600000
                                 :max-lifetime       1800000
                                 :maximum-pool-size  5
-                                :minimum-idle       1}}
+                                :minimum-idle       1}
+            :username          "postgres"}
  :queue    {:batch-complete-delay 10
             :batch-fail-delay     10
             :local-queue          {:enabled true
