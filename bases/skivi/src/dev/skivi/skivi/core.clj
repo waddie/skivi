@@ -33,7 +33,8 @@
 
     ;; On shutdown
     (skivi/stop! system)"
-  (:require [dev.skivi.config.interface :as config]
+  (:require [babashka.fs :as fs]
+            [dev.skivi.config.interface :as config]
             [dev.skivi.database.interface :as database]
             [dev.skivi.job-history.interface :as job-history]
             [dev.skivi.job-manager.interface :as job-manager]
@@ -52,22 +53,21 @@
   ([task-directory] (load-task-registry task-directory [".clj"]))
   ([task-directory file-extensions]
    (let [exts (set (if (seq file-extensions) file-extensions [".clj"]))
-         dir  (java.io.File. ^String task-directory)]
-     (when-not (.isDirectory dir)
+         dir  (fs/file task-directory)]
+     (when-not (fs/directory? dir)
        (throw (ex-info (str
                         "task-directory does not exist or is not a directory: "
                         task-directory)
                        {:task-directory task-directory})))
-     (->> (.listFiles dir)
-          (filter (fn [^java.io.File f]
-                    (some #(.endsWith (.getName f) ^String %) exts)))
-          (sort-by #(.getName ^java.io.File %))
-          (reduce (fn [registry ^java.io.File f]
-                    (let [result (load-file (.getAbsolutePath f))]
+     (->> (fs/list-dir dir)
+          (filter (fn [f] (some #(.endsWith (fs/file-name f) %) exts)))
+          (sort-by fs/file-name)
+          (reduce (fn [registry f]
+                    (let [result (load-file (str (fs/absolutize f)))]
                       (when-not (map? result)
                         (throw (ex-info (str "Task file must return a map: "
-                                             (.getName f))
-                                        {:file (.getAbsolutePath f)})))
+                                             (fs/file-name f))
+                                        {:file (str (fs/absolutize f))})))
                       (merge registry result)))
                   {})))))
 

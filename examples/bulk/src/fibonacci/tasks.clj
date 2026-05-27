@@ -1,5 +1,5 @@
 (ns fibonacci.tasks
-  (:require [clojure.java.io :as io]))
+  (:require [babashka.fs :as fs]))
 
 (defn- fib
   "Returns the nth Fibonacci number (1-indexed: F(1)=0, F(2)=1, F(3)=1, ...)."
@@ -13,8 +13,8 @@
   [{:keys [job]}]
   (let [{:keys [n output-dir]} (:payload job)
         result (fib n)
-        f      (io/file output-dir (str n))]
-    (io/make-parents f)
+        f      (fs/file output-dir (str n))]
+    (fs/create-dirs (fs/parent f))
     (spit f (str result))))
 
 (def registry {"write-fibonacci" write-fibonacci})

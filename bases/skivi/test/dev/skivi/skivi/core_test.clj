@@ -21,7 +21,7 @@
 ;;    under the terms of that license instead of the AGPL-3.0-or-later.
 
 (ns dev.skivi.skivi.core-test
-  (:require [clojure.java.io :as io]
+  (:require [babashka.fs :as fs]
             [clojure.test :refer [deftest is testing]]
             [dev.skivi.database.interface :as database]
             [dev.skivi.job-history.interface :as job-history]
@@ -127,67 +127,52 @@
         (core/stop! sys)
         (is @closed?)))))
 
-(defn- make-temp-dir
-  []
-  (let [d (java.io.File. (System/getProperty "java.io.tmpdir")
-                         (str "skivi-test-" (random-uuid)))]
-    (.mkdirs d)
-    d))
+(defn- make-temp-dir [] (fs/create-temp-dir {:prefix "skivi-test-"}))
 
 (defn- write-file
-  [^java.io.File dir name content]
-  (let [f (io/file dir name)]
+  [dir name content]
+  (let [f (fs/file dir name)]
     (spit f content)
     f))
 
 (deftest load-task-registry-returns-empty-map-for-empty-dir
   (let [dir (make-temp-dir)]
-    (try (is (= {} (core/load-task-registry (.getAbsolutePath dir))))
-         (finally (doseq [f (.listFiles dir)]
-                    (.delete f))
-                  (.delete dir)))))
+    (try (is (= {} (core/load-task-registry (str dir))))
+         (finally (fs/delete-tree dir)))))
 
 (deftest load-task-registry-loads-single-file
   (let [dir (make-temp-dir)]
     (try (write-file dir "tasks.clj" "{\"send-email\" (fn [_] nil)}")
-         (let [reg (core/load-task-registry (.getAbsolutePath dir))]
+         (let [reg (core/load-task-registry (str dir))]
            (is (contains? reg "send-email"))
            (is (ifn? (get reg "send-email"))))
-         (finally (doseq [f (.listFiles dir)]
-                    (.delete f))
-                  (.delete dir)))))
+         (finally (fs/delete-tree dir)))))
 
 (deftest load-task-registry-merges-multiple-files-alphabetically
   (let [dir (make-temp-dir)]
     (try (write-file dir "b-tasks.clj" "{\"task-b\" (fn [_] :b)}")
          (write-file dir "a-tasks.clj" "{\"task-a\" (fn [_] :a)}")
-         (let [reg (core/load-task-registry (.getAbsolutePath dir))]
+         (let [reg (core/load-task-registry (str dir))]
            (is (contains? reg "task-a"))
            (is (contains? reg "task-b")))
-         (finally (doseq [f (.listFiles dir)]
-                    (.delete f))
-                  (.delete dir)))))
+         (finally (fs/delete-tree dir)))))
 
 (deftest load-task-registry-later-file-wins-on-conflict
   (let [dir (make-temp-dir)]
     (try (write-file dir "a-tasks.clj" "{\"same-task\" (fn [_] :from-a)}")
          (write-file dir "b-tasks.clj" "{\"same-task\" (fn [_] :from-b)}")
-         (let [reg (core/load-task-registry (.getAbsolutePath dir))]
+         (let [reg (core/load-task-registry (str dir))]
            (is (= :from-b ((get reg "same-task") nil))))
-         (finally (doseq [f (.listFiles dir)]
-                    (.delete f))
-                  (.delete dir)))))
+         (finally (fs/delete-tree dir)))))
 
 (deftest load-task-registry-respects-file-extensions
   (let [dir (make-temp-dir)]
     (try (write-file dir "tasks.clj" "{\"clj-task\"  (fn [_] nil)}")
          (write-file dir "tasks.cljc" "{\"cljc-task\" (fn [_] nil)}")
-         (let [reg (core/load-task-registry (.getAbsolutePath dir) [".cljc"])]
+         (let [reg (core/load-task-registry (str dir) [".cljc"])]
            (is (contains? reg "cljc-task"))
            (is (not (contains? reg "clj-task"))))
-         (finally (doseq [f (.listFiles dir)]
-                    (.delete f))
-                  (.delete dir)))))
+         (finally (fs/delete-tree dir)))))
 
 (deftest load-task-registry-throws-for-missing-directory
   (is (thrown-with-msg? clojure.lang.ExceptionInfo
@@ -199,8 +184,5 @@
     (try (write-file dir "bad.clj" "42")
          (is (thrown-with-msg? clojure.lang.ExceptionInfo
                                #"Task file must return a map"
-                               (core/load-task-registry (.getAbsolutePath
-                                                         dir))))
-         (finally (doseq [f (.listFiles dir)]
-                    (.delete f))
-                  (.delete dir)))))
+                               (core/load-task-registry (str dir))))
+         (finally (fs/delete-tree dir)))))
